@@ -1,0 +1,219 @@
+1. Introduction
+As the most common cancer among women worldwide, breast cancer poses significant health challenges and requires comprehensive research
+efforts to understand its complexities. The understanding of the multifaceted nature of breast cancer can assist researchers in paving 
+the way for supportive care, personalized medicine, as well as early detection and screening. This brings us to the paper of 
+"Comprehensive Molecular Portraits of Invasive Lobular Breast Cancer", in which a comprehensive study with a refined and detailed picture
+ of a specific cancer known as Invasive Lobular Cancer (ILC) is presented. Compared to its counterpart, Invasive Ductal Carcinoma (IDC), 
+ some ambiguities arise with respect to differences and variances. This led the researchers down a deep dive into an impressive curated 
+ collection of 817 breast cancer tumors, the largest collection of ILCs to date; in order to distinguish ILC from IDC. 
+ 
+It is important to note that ILC and IDC are different clinically, physiologically, as well as genetically; in which the latter has been 
+thoroughly abused by the researchers. The genetic makeup was further analysed through different omic layers including whole-exome DNA
+sequencing, RNA sequencing, miRNA sequencing, and DNA methylation arrays. Bringing us to a multi-omics approach where each layer 
+provides unique intel or information relating to the tumor features. The total number of features consisted of 1936 in total, dividied
+into four unique molecular data profiles: 
+   1. CN stands for copy number variations, which are alterations in the number of copies of a particular gene in the genome; there were 860 
+   instances of such variations. 
+   2. Mu denotes mutations, which are changes in the DNA sequence of genes; the study identified 249 mutations.
+   3. Rs represents gene expression, measured by RNA sequencing, which quantifies how actively genes are being transcribed into RNA; 
+   there were 604 gene expression measurements. 
+   4. Pp refers to protein levels, indicating the abundance of proteins in the cells, with 223 protein level measurements taken. 
+The importance of these data lies in their ability to accurately profile breast cancers, aiding in the differentiation between ILC and IDC.
+
+2. Data Preprocessing
+We start by uploading the dataset, which consists of 705 cancer samples, described by four specific features. We downloaded it as a CSV from the following link: https://www.kaggle.com/datasets/samdemharter/brca-multiomics-tcga/data
+
+2.1 Load libraries necessary for the correct import, data manipulation, and data visualization.
+```{r}  
+load-libraries-and-data, echo=TRUE
+library(ggplot2)
+library(glmnet)
+```
+2.2 Import and read data
+```{r}
+file_path <- "C:/Users/35134/Desktop/Stat/data.csv"
+rain <- read.csv(file_path)
+head(rain)
+omics <- read.table("data.csv", header = TRUE, sep=",")
+```
+# Specify the column names and their prefixes
+```{r} 
+rs.cols <- grep(paste0("^", "rs"), names(omics))
+cn.cols <- grep(paste0("^", "cn"), names(omics))
+mu.cols <- grep(paste0("^", "mu"), names(omics))
+pp.cols <-grep(paste0("^", "pp"), names(omics)) 
+```
+2.3 Missing Values Imputation
+One of the main steps of data pre-processing is fixing the issue of missing data. Usually this happens due to high data dimensionality; low quality sequencing ending up disgarded.
+One might think of removing features or rows belonging to the missing data would solve the problem, but impose more critical effects on data analysis.
+We could face loss of information, a certain bais, as well as a reduction in pattern recognition. 
+In our case, to solve the problem of missing values, we first start by subsetting the dataset to include only the rows and columns with missing values. 
+Next, we calculate the missing value rate for each column and row of the 'rs' and 'pp'. This is followed by a median imputation, where the missing values are replaced by the median of the non-missing values in the same column.
+The missing value rate is calculated by dividing the number of missing values by the total number of values in the column or row.
+The median imputation is performed by replacing the missing values with the median of the non-missing values in the same column.
+```{r}  
+rs <- omics[rs.cols]
+pp <- omics[pp.cols]
+rs.missing <- sum(apply(omics[rs.cols], 1, function(x) any(x == 0))) 
+rs.medians <- apply(rs, 2, function(x) median(x[x != 0]))
+pp.medians <- apply(pp, 2, function(x) median(x[x != 0]))
+# Missing value rate 
+rs.missing.rate <- sum(rs == 0) / (length(rs.cols) * length(rs))
+rs.missing.rate
+pp.missing.rate <- sum(pp == 0) / (length(pp.cols) * length(pp))
+pp.missing.rate
+```
+2.4 Feature Distribution
+One additional pre-processing step is to check the distribution of the features. This is important to visualize the data as well as identifying any potential outliers or correlated variables.
+We start by plotting the distributions of the four variables 
+```{r}
+# Gene Expression Distribution 
+long_rs <- tidyr::gather(omics[rs.cols], value = "value", rs.cols)
+ggplot(long_rs, aes(x = value)) + 
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Smoothed Distribution of Gene Expression Levels", x = "Level", y = "Density")
+# Protein Abundance Distribution
+long_pp <- tidyr::gather(omics[pp.cols], value = "value", pp.cols)
+ggplot(long_pp, aes(x = value)) + 
+  geom_density(alpha = 0.5) +
+  theme_minimal() +
+  labs(title = "Smoothed Distribution of Protein Abundance Levels", x = "Level", y = "Density")
+# Copy Number Distribution
+long_cn <- tidyr::gather(omics[cn.cols], value = "value", cn.cols)$value
+barplot(table(long_cn)/sum(table(long_cn)))
+# Mutations Distribution
+long_mu <- tidyr::gather(omics[mu.cols], value = "value", mu.cols)$value
+barplot(table(long_mu)/sum(table(long_mu)))
+
+# And finally, the distribution of the target variable, Vital Status
+Vital Status (Target)
+barplot(table(omics$vital.status)/sum(table(omics$vital.status)))
+```
+2.5 Data Normalization
+The final step of data pre-processing is to normalize and standardize the continous features, especially "rs" and "pp". This step is done to ensure that all features are brought to a similar scale by reducing their ranges, and to avoid any 
+feature domination causing bias in the model. 
+```{r}
+omics_norm <- omics
+omics_norm[c(rs.cols,pp.cols)] <- scale(omics[c(rs.cols,pp.cols)])
+colMeans(omics)[1:5]
+```
+
+3. Regression Models
+The next step is to build predictive regression models in order to implement a binary classification of the target variable, Vital Status, that takes one of two labels making it desirable for both patient and physician.
+
+# Intuitively, logistic regression stands out as a suitable model for its statistical support and probabilistic abilities. Using this model, we can estimate the probability of a patient's survival based on the values of the omic features also called predictor variables.
+# It applies a logistic function to a linear combination of the predictor variables, ensuring that they lie between 0 and 1. However, this action depends on the types of data due to the fact that it acts differently with each type.
+  #  1. For continuous variables, the model is applied directly without any transformation involved.
+  # 2. For binary variables, the model is applied directly without any transformation involved as well.
+  #  3. For categorical variables, the model is applied after encoding them into numerical formats. 
+  #  4. For mixed variables, the model processes each feature accordingly, after preprocessing, and then combines them into a single model.
+# This quality imrpoves the model's robustness and accuracy.
+
+Keeping in mind that our dataset is made up of high-throughput omics data on multiple levels, composed of continous outcome variables based on one or more predictor variables.
+However, the problem is ill-proposed as there are more features than examples. Thus retrieving multiple tests to track over 1000 features is impractical and would lead to overfitting.
+To solve this issue, we can go beyond the standard logistic regression models, and implement two alternative regularization models: LASSO and Ridge Regression. Both regularization techniques introduce a penalty team to the
+standard regression model; Least Absolute Shrinkage and Selection Operator (LASSO) regression utilizes the L1 norm, which is the sum of the absolute value of the parameters multiplied by a hyperparameter,
+lambda, whereas Ridge Regression uses the L2 norm, which is the square root of the sum of squared parameters multiplied by the lambda hyperparameter. The lambda hyperparameter plays a major
+role in determining the level of regularization introduced in the model; the higher the lambda value is, the higher the regularization and vice-versa. Moreover, LASSO regression is suitable for performing
+another form of feature selection as it introduces sparsity and prioritizes fewer parameters. Ridge regression, on the other hand, is effective for dealing with multicollinearity,
+when features are highly correlated, by shrinking the magnitude of the coefficients. 
+
+3.1 Train Test Split
+To prevent overfitting, we steer towards simpler and affordable models typically evaluated through a process of subset selection or splitting. This is done by dividing the dataset into two parts: a training set and a testing set. The training set is made up of the majority of the dataset used to train the model,
+allowing it to learn the best hyperparameters. While the testing set is used exclusively to evaluate the model's performance at predictions.
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Set training set size to 70% of the total dataset
+sample_size <- floor(0.7 * nrow(omics_norm))
+
+# Calculate train indices
+train_indices <- sample(seq_len(nrow(omics_norm)), size = sample_size)
+
+# Select the predictor variables and the response variable for training and test set
+X_train <- X[train_indices, ]
+y_train <- y[train_indices]
+X_test <- X[-train_indices, ]
+y_test <- y[-train_indices]
+
+# Run regression model using training set
+grid <- 10^seq(10, -2, length = 100) # by generating a grid of lambda values from 10^10 to 10^-2 for the LASSO model
+lasso.mod <- glmnet(X_train, y_train, alpha = 1, lambda = grid)
+
+# Perform cross validation to find the optimal lambda value. 
+# It is selected based on the value that minimizes the classification error of the model.
+cv.lasso <- cv.glmnet(X_train, y_train, alpha = 1, type.measure = "class")
+best.lambda <- cv.lasso$lambda.min
+
+# By selecting the optimal lambda, we make predictions on the test set
+predictions <- predict(cv.lasso, newx = X_test, s = "lambda.min", type = "response")
+predicted.classes <- ifelse(predictions > 0.5, 1, 0), #  followed by calculating the accuracy on the test set
+correct_predictions <- sum(predicted.classes == y_test)
+accuracy <- correct_predictions / length(y_test)
+print(paste("Accuracy on test set:", accuracy))
+```
+In order to identify if the model was able to shrink the coefficients, we begin by extracting and analyzing the non zero coefficients as well as identifying the corresponding features.
+```{r}
+# Extract non-zero coefficients at the best lambda value for each predictor variable
+coefficients <- coef(cv.lasso, s = "lambda.min")
+
+# Exclude intercept and start from the second element 
+# This step is important due to the fact that including an intercept will prevent the regularization process from aligning with the objective of penalizing coefficients to shrink them towards zero. Not 
+# only that, but it can divert the model's attention from the main objective of feature selection, and confuse the model with predictor variables set to zero.
+non_zero_features <- coefficients[-1, , drop = FALSE]
+
+# Count the number of non-zero coefficients
+num_non_zero_features <- sum(non_zero_features != 0)
+print(paste("Number of non-zero features used in the model:", num_non_zero_features))
+
+# To give insight into the features selected by the model, we extract the names of the non-zero features.
+coef_vector <- as.vector(coefficients[-1, , drop = FALSE])
+feature_names <- rownames(coefficients)[-1] # Exclude the intercept row
+
+# Identify feature names with non-zero coefficients
+non_zero_feature_names <- feature_names[coef_vector != 0]
+print("Features with non-zero coefficients:")
+print(non_zero_feature_names)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+3.2 Ridge Regression
+```{r}
+# Start by preparing the data
+# By extracting the predictor variables except for the last column assuming it contains the response variable
+x <- omics_norm[, -which(names(omics_norm) == "vital.status")]
+y <- omics_norm$vital.status
+
+# Followed up by fitting the model by modeling the probability of a binary outcome based on all other variables
+glm.out <- glm(vital.status ~ ., data = omics_norm, family = binomial)
+
+# Grid search to find the best lambda value applied
+grid <- 10^seq(10, -2, length = 100), # 100 values in total from 10^10 to 10^-2
+
+# Apply the ridge regression model  
+# Plotting is followed to identify the coefficients change as lambda changes, as well as visualizing the deviance of the model, finally extracting the best lambda in terms of goodness of fit
+lasso.mod <- cv.glmnet(x, y, alpha = 1, lambda = grid, family = "binomial") 
+plot(lasso.mod, xvar = "lambda", label = TRUE)
+plot(lasso.mod, xvar = "dev", label = TRUE)
+plot(lasso.mod, xvar = "lambda", label = TRUE)
+```
+
+
