@@ -32,47 +32,67 @@ Distribution
 
 ## Missing Value Imputation
 Missing values in omics data is commonly a result of low quality reads that are removed.
-RS and PP are continuous variables, so it is very clear when information is missing, as indicated by a '0' entry. There are two common methods for dealing with missing values: either exclude that example or feature from computation, or impute the missing values by replacing them with the features median value. Imputation introduces some bias, but it is unavoidable in many cases such as this one, where dropping rows or features with missing values would not leave a usable amount of data. We calculate the rates of missing values for the two omics that take continuous values. It is most likely that the other forms of omics have missing values as well. Unfortunately, since they take discrete values, it is not possible to distinguish true '0' readings from missing values. Thankfully 0 is the mode for these values(as we will demonstrate), so represents a reasonable imputation.
+RS and PP are continuous variables, so it is very clear when information is missing, as indicated by a '0' entry. There are two common methods for dealing with missing values: either exclude that example or feature from computation, or impute the missing values by replacing them with the features mean value. Imputation introduces some bias, but it is unavoidable in many cases such as this one, where dropping rows or features with missing values would not leave a usable amount of data. We calculate the rates of missing values for the two omics that take continuous values. It is most likely that the other forms of omics have missing values as well. Unfortunately, since they take discrete values, it is not possible to distinguish true '0' readings from missing values. Thankfully 0 is the mode for these values(as we will demonstrate), so represents a reasonable imputation.
 ```{r}
 # Missing value imputation
 # due to high dim, removing missing not an option; every row and col has missing values
 rs <- omics[rs.cols]
 pp <- omics[pp.cols]
 rs.missing <- sum(apply(omics[rs.cols], 1, function(x) any(x == 0))) 
+# if you want to impute with median
 rs.medians <- apply(rs, 2, function(x) median(x[x != 0]))
 pp.medians <- apply(pp, 2, function(x) median(x[x != 0]))
+# if you want to impute with mean
+rs.means <- apply(rs, 2, function(x) mean(x[x != 0]))
+pp.means <- apply(pp, 2, function(x) mean(x[x != 0]))
 # Missing value rate
 rs.missing.rate <- sum(rs == 0) / (length(rs.cols) * length(rs))
-rs.missing.rate
+print(paste("Gene Expression features missing value rate:", round(rs.missing.rate,3)))
 pp.missing.rate <- sum(pp == 0) / (length(pp.cols) * length(pp))
-pp.missing.rate
-
-for(i in seq_along(rs.medians)) {
-  rs[rs[, i] == 0, i] <- rs.medians[i]
+print(paste("Protein Abundance features missing value rate:", round(pp.missing.rate,3)))
+# means represent expression features better than median
+for(i in seq_along(rs.means)) { 
+  rs[rs[, i] == 0, i] <- rs.mean[i]
 }
+
 for(i in seq_along(pp.medians)) {
-  pp[pp[, i] == 0, i] <- pp.medians[i]
+  pp[pp[, i] == 0, i] <- pp.mean[i]
 }
 omics[c(rs.cols,pp.cols)] <- c(rs,pp)
 ```
-Here we visualize the distribution of values taken by all features of a given type of omics.  
+
+Here we visualize the distribution of values taken by all features of a given type of omics. 
+Note that data from all columns of the same type are aggregated to plot the distribution of a given type of omics data. When it comes to normalization and imputation, population statistics are calculated for each feature separately.
 TODO: calculate population statistics for each omics type.  
 TODO: Remake the continuous distribution plots, something is wrong with them
 ```{r, echo=FALSE, warning=FALSE}
 library(ggplot2)
 # Feature distributions
 # Gene Expression
+# HISTOGRAMS
 long_rs <- tidyr::gather(omics[rs.cols], value = "value", rs.cols)
 ggplot(long_rs, aes(x = value)) + 
-  geom_density(alpha = 0.5) +
+  geom_histogram(binwidth = 1, fill = "skyblue", color = "black", alpha = 0.7) +  # Adjust binwidth as needed
   theme_minimal() +
-  labs(title = "Smoothed Distribution of Gene Expression Levels", x = "Level", y = "Density")
-# Protein Abundance
+  labs(title = "Distribution of Gene Expression Levels", x = "Level", y = "Frequency")
 long_pp <- tidyr::gather(omics[pp.cols], value = "value", pp.cols)
 ggplot(long_pp, aes(x = value)) + 
-  geom_density(alpha = 0.5) +
+  geom_histogram(binwidth = 1, fill = "lightgreen", color = "black", alpha = 0.7) +  # Adjust binwidth as needed
   theme_minimal() +
-  labs(title = "Smoothed Distribution of Protein Abundance Levels", x = "Level", y = "Density")
+  labs(title = "Distribution of Protein Abundance Levels", x = "Level", y = "Frequency")
+# DENSITY PLOTS
+# long_rs <- tidyr::gather(omics[rs.cols], value = "value", rs.cols)
+# ggplot(long_rs, aes(x = value)) + 
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   labs(title = "Smoothed Distribution of Gene Expression Levels", x = "Level", y = "Density")
+# # Protein Abundance
+# long_pp <- tidyr::gather(omics[pp.cols], value = "value", pp.cols)
+# ggplot(long_pp, aes(x = value)) + 
+#   geom_density(alpha = 0.5) +
+#   theme_minimal() +
+#   labs(title = "Smoothed Distribution of Protein Abundance Levels", x = "Level", y = "Density")
+
 # Copy Number
 long_cn <- tidyr::gather(omics[cn.cols], value = "value", cn.cols)$value
 barplot(table(long_cn)/sum(table(long_cn)), main = "Distribution of Copy Number")
@@ -80,23 +100,47 @@ barplot(table(long_cn)/sum(table(long_cn)), main = "Distribution of Copy Number"
 long_mu <- tidyr::gather(omics[mu.cols], value = "value", mu.cols)$value
 barplot(table(long_mu)/sum(table(long_mu)), main = "Distribution of Mutations")
 # Vital Status (Target)
-barplot(table(omics$vital.status)/sum(table(omics$vital.status)), main = "Distribution of Vital Status (target)")
+vital_status_freq <- table(omics$vital.status)
+vital_status_perc <- vital_status_freq / sum(vital_status_freq) * 100
+
+# Create the barplot and capture the return value to get the midpoints of the bars
+bar_midpoints <- barplot(vital_status_perc / 100, main = "Distribution of Vital Status (target)")
+
+# Label the bars with percentages rounded to 1 decimal place
+text(x = bar_midpoints, y = 0.4, # Adjust position as needed
+     labels = paste(round(vital_status_perc, 1), "%"), cex = 0.8, pos = 3)
+
 ```
-The final step of pre-processing is to transform the features to have zero mean and variance 1.  
+Looking at the distribution of our target variable vital.status, we can see that positive(lobular) examples make up $13.3%$ of all the data, and thus represents the rate at which a model generating uniform guesses would be correct.
+
+The final step of pre-processing is to transform the continuous features to have zero mean and variance 1.  
 TODO: explain why this is important for logistic regression  
 ```{r}
 omics_norm <- omics
 omics_norm[c(rs.cols,pp.cols)] <- scale(omics[c(rs.cols,pp.cols)])
 colMeans(omics)[1:5]
+colMeans(omics_norm)[1:5]
 ```
 
-
 ## Covariance analysis
+In order to assess possible co-linearities present in our features, we compute the correlation matrix of our data(simply $X^T*X$). The large number of features in our dataset makes inspecting this information directly impractical, and visualizing this matrix as it currently exits would produce a quite noisy and not very useful plot. To address this issue, we use the heatmap function to visualize the absolute value of correlation coefficients. The result is a visualization where the indices have been reordered as to cluster related features, where groups of correlated variables can be seen as darker blue blocks. We do the same for a subset of features to better illustrate the more subtle features of the correlation plot.
+```{r}
+library(RColorBrewer)
+hm.colors <- colorRampPalette(brewer.pal(8, "Blues"))(25)
+cor.mat <- cor(omics_norm)
+heatmap(abs(cor.mat), col = hm.colors) # TODO: remove indicies
+heatmap(abs(cor.mat[1:100, 1:100]), col = hm.colors) # TODO: maybe pick a better region
+```
+The first plot demonstrates that co-linearity is thankfully sparse, as there are not massive regions of related variables. In the second plot we examine a smaller region around the diagnoal, to better illustrate visual patterns. What we observe is that many features are in small blocks of correlated variables. 
+This poses a problem for regression tasks as highly correlated variables could be interchangeable in the model.  
+In many cases a reasonable approach for solving this issue of multi-colinearity would be to calculate and filter features by their Variance Inflation Factor (VIF), but this is computationally impractical for thousands of features. 
+Another alternative is princibal component analysis (PCA), which is frequently used with omics data, but experiences difficulities in cases like ours where the number of features exceed the number of examples. Additionality, such dimensionality reduction techniques would impede the intrepetibility of results. 
+In this paper, we focus on regularized logistic regression with LASSO and Elastic Net to address these issues.
 
 ## Logistic regression
 Definition
 
-Full model(?) - maybe just go straight to k-fold CV
+
 ```{r}
 library(glmnet)
 X <- as.matrix(omics_norm[,-ncol(omics_norm)]) # Convert to matrix for glmnet
@@ -129,7 +173,14 @@ We can additionally observe a warning that our model failed to converge and many
 One thing that often makes logistic regression models useful is there intractability. Coefficients of a trained model serve as clear indicators of a features effect on a target variable. However, when there is close to 2000 such coefficients this ceases to be useful.  
 [the information about why it is more useful to have fewer features]  
 [Introduce LASSO]  
-[Introduce K-fold]  
+Given the above issues it is clear that we will need to perform logistic regression using a subset of predictor variables. 
+To accomplish we use a regularized form of logistic regression called LASSO (Least Absolute Shrinkage and Selection operator). LASSO introduces regulation in the a penalty term on the sum of absolute value of model coefficients. This gives us a new objective function for logistic regression with LASSO:  
+$$\min_\beta \sum_{i=1}^n [y_i\log(\hat{y}_i) + (1 - y_i)\log(1-\hat{y}_i] + \lambda\sum_{j=1}^m|\beta_j|$$  
+where $\lambda\sum_{j=1}^m|\beta_j|$ is the L1 penalty, incentivising small parameter values to prevent overfitting and sparsity, as many of the parameters will shrink to exactly 0. In this sense LASSO is a shrinkage method, because it reduces the complexity of a model by enforcing sparsity of its parameters. Consequently, the resulting models will rely on fewer predictive variables. 
+The hyper-parameter $\lambda$ adjusts the strength of the L1 regulation and has large effect on model performance and number of selected features. Since it is so important, optimal values of lambda that minimize our loss (binomial deviance) need to be found. This can be done manually by passing glmnet a grid of $\lambda$ values to fit a model using each one, or automatically using cv.glmnet. We use the latter, but it does mean we are twice cross-validating, but this only improves our validation and the outer cv loop is needed for more through analysis. 
+Additionally, we introduce 4-fold cross validation to better assess model performance and consistency of selected variables. 
+
+
 ```{r}
 # Note that glmnet has its own kfold functionality but we would like to analyze all models
 # Need custom CV loop
@@ -164,14 +215,23 @@ for (i in 1:nfolds) {
   y_test.fold <- y.lasso[test_indices]
   
   # Fit model on training data
-  fit <- glmnet(X_train.fold, y_train.fold, family = "binomial", alpha = 1)
+  #fit <- glmnet(X_train.fold, y_train.fold, family = "binomial", alpha = 1)
   
-  # Optionally, use cv.glmnet to determine the best lambda within each fold
+  # cv.glmnet determines the best lambda within each fold
   cv_fit <- cv.glmnet(X_train.fold, y_train.fold, family = "binomial", alpha = 1, type.measure = "class")
+  
+  #grid <- 10^seq(10, -2, length=100)
+  fit <- glmnet(X_train.fold, y_train.fold, family = "binomial", alpha = 1, type.measure = "class")
+  #par(mfrow = c(2, 2))
+  #plot(fit, xvar="lambda", label=TRUE)
+  #plot(fit, xvar="norm", label=TRUE)
+  #plot(fit, xvar="dev", label=TRUE)
+  #par(mfrow = c(1, 1))
+  #title(main = paste("Plot for Fold", i))
   best_lambda <- cv_fit$lambda.min
   
   # Make predictions on the test set
-  predictions <- predict(cv_fit, newx = X_test.fold, s = "lambda.min", type = "response")
+  predictions <- predict(cv_fit, newx = X_test.fold, type = "response")
   predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
   
   # Calculate accuracy and classification error
@@ -187,7 +247,8 @@ for (i in 1:nfolds) {
   fold_results[[i]] <- list(
     coefficients = coef(cv_fit, s = "lambda.min"), # Coefficients at best lambda
     best_lambda = best_lambda,
-    cv_fit = cv_fit # You can also store the entire cv.glmnet object
+    fit = fit, 
+    cv_fit = cv_fit
   )
 }
 
@@ -196,17 +257,59 @@ for (i in 1:nfolds) {
 accuracies
 ```
 
+We can observe appreciable variation on the test accuricies accross folds. We will explore reasons for this variation more later.  
 
-## Stability Analysis (slopiness)
-Another advantage of K-fold cross validation is it introduces noise into our data. Though this may sound like a bad thing, it is incredibly useful for performing sensitivity analysis. In this case, we can look at the features selected by the LASSO method by models trained on different subsets of the original data. Variation in parameters across models trained on different subsets of the original data is referred to as *sloppiness*. It can be common with data having high multicollinearity, as features can often be substituted with similar results.
-[compare the features selected from each fold]
 
+
+```{r}
+cv.best.idx <- which.max(accuracies)
+par(mfrow=c(2,2))
+plot(fold_results[[cv.best.idx]]$fit, xvar="lambda", label=TRUE)
+plot(fold_results[[cv.best.idx]]$fit, xvar="norm", label=TRUE)
+plot(fold_results[[cv.best.idx]]$fit, xvar="dev", label=TRUE)
+par(mfrow = c(1, 1))
+title(main = paste("Plot for best fold: ", cv.best.idx))
+```
 ## metrics & evaluation  
 - accuracy  
 - R^2  
 - confusion matrix  
 - precision, recall F1, AUC  
 
-# Subset analysis  
-for each omics type make model excluding and using only that tyoe, test means
+Here we will compute metrics charactarizing the performance of LASSO on our dataset from the fold with the best test accuracy.
 
+
+
+## Stability Analysis (slopiness)
+Another advantage of K-fold cross validation is it introduces noise into our data. Though this may sound like a bad thing, it is incredibly useful for performing sensitivity analysis. In this case, we can look at the features selected by the LASSO method by models trained on different subsets of the original data. Variation in parameters across models trained on different subsets of the original data is referred to as *sloppiness*. It can be common with data having high multicollinearity, as features can often be substituted with similar results.
+[compare the features selected from each fold]
+```{r}
+cv.lasso.coeffs <- cbind(fold_results[[1]]$coefficients, fold_results[[2]]$coefficients, fold_results[[3]]$coefficients, fold_results[[4]]$coefficients)
+cv.lasso.coeffs <- cv.lasso.coeffs[apply(cv.lasso.coeffs, 1, function(x) any(x != 0)),]
+#cv.lasso.coeffs[cv.lasso.coeffs == 0] <- NA
+cv.binary.coeffs <- as.data.frame(apply(cv.lasso.coeffs, 2, function(x) as.integer(x != 0)))
+library(tidyr)
+cv.binary.coeffs.long <- pivot_longer(cv.binary.coeffs, cols = everything(), names_to = "Variable", values_to = "Presence")
+library(ggplot2)
+
+ggplot(cv.binary.coeffs.long, aes(x = Variable, y = name, fill = factor(Presence))) + 
+  geom_tile(color = "white") + 
+  scale_fill_manual(values = c("0" = "white", "1" = "blue"), name = "Presence", labels = c("0" = "Absent", "1" = "Present")) +
+  labs(x = "Fold", y = "Coefficient", title = "Presence of Non-Zero Coefficients Across Folds") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#heatmap(as.matrix(cv.lasso.coeffs))
+```
+
+
+
+# Subset analysis  
+for each omics type make model excluding and using only that type, test means
+We observe that the best LASSO model from 4-fold cross validation contains a mix of different omics types. The fact that the model did not select features of exclusively one omics type provides evidence of the usefulness of multi-omic integration. To investigate this further, we can construct subset models where we withhold different types of omics information, train a lasso model and compare the resulting performance.
+This is made rigorous with by performing a ___ test. Where we measure
+In principle, nested models' performance ($R^2$) is bounded by larger models.  
+Given two models $M_1$ nested in $M_0$, $R^2_{M_1} \leq R^2_{M_0}$
+Note that the result of LASSO on restricted omics data will not be a true nested model, as 
+but there are still use this principle to know there are theoretical bounds on the performance on models with restricted features that are less or equal to a full model.
+For each omic type we construct two new models: one where we remove features of this type, and another where we train a model exclusively on features of this omic type.
