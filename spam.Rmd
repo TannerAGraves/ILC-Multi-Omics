@@ -1,0 +1,284 @@
+---
+title: "spamClass"
+output: html_document
+date: "2024-02-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+## Introduction
+
+## Loading and Preprocessing
+
+```{r spam}
+data_path <- "spambase.data" # Update this to your file path
+data <- read.table(data_path, sep = ",", header = FALSE)
+col_names <- readLines("spambase_edit.names")
+names(data) <- col_names
+```
+The dataset is well curated; there is no missing values. However, many integer features are sparse.
+
+## Examples
+examples in this data set
+## Target feature
+Emails in the dataset are difinitively labeled spam with the binary feature 'spam_target'. 
+These 
+## Predictive features  
+This dataset consits of 4601 examples of 58 variables which characterize the content of an email.   
+These properties are of heterogeneous type:
+* 55 are continuous real variables representing the frequency of observable attributes in the text.  
+* 48 of these are word frequencies, where a word is defined by a string of characters surrounded by white space. Some of the words of interest were selected as they correlate highly with spam like 'free' or 'credit' while others may be more characteristic of genuine e-mails sent in a workplace like: 'meeting' or 'project'.  
+* 6 other continuous reals are frequencies of individual characters, specifically punctuation makrks : ;,(, [, !, $, and #. These presumably differ in frequency in different types of writing and have the potential to be differently distributed across our classes (spam / not spam).  
+* The last real valued feature is the average length of continuous strings of capital letters for example: if "ABCDE" and "BUY NOW" are the only such contigs in the body of an email, the average length would be 5.5.  
+The remaining 2 predictive features are continuous integers representing:  
+* the longest uninterrupted sequence of capital letters  
+* The sum of all such continuous strings of capital letters present in the email body (excluding strings of length 1)  
+
+# Distribution of features  
+As a first act of reprocessing I will resale all frequency features to be represented as decimal rates rather than percent values.  
+```{r}
+#X[1:54] <- X[1:54] / 100
+```
+
+Here we plot representative distributions of our different features
+Word frequencies have very small means and have mode 0, as most of the words are specific enough that a single email will have low chance to include the word at all. 
+However, since emails can naturally very drastically in their subject matter, so too does the frequencies with which specific words appear in them. 
+This is easily visualized by the long tail of the density plot. 
+Issues: Visualization, leverage, feature selection
+```{r}
+density_estimate <- density(data[, 2], from=0)
+plot(density_estimate, main = "Density of Select freq. Features", xlab = "Frequency %", ylab = "Density")
+#num_columns <- ncol(X)
+
+
+# Loop through remaining columns and add their densities to the plot
+plot.feats <- c(3,5)
+for(i in plot.feats) {
+  density_estimate <- density(data[, i], from=0)
+  lines(density_estimate, col = i) # Use different colors for each column
+}
+
+# Add a legend to the plot to distinguish the columns
+#legend("topright", legend = paste("Column", 1:num_columns), fill = 1:num_columns)
+```
+The long tail shown by frequency predictior features may be troubling. Logistic regression is robust to mild amounts of outliers.
+In this situation, examples that lie at the extremes of feature distributions do not represent anomalies that can be discarded, but highly significant information about the content of the email. To better understand this significance, we examine the difference in distribution of features highly correlated with the outcome of spam_target by class later.
+
+The features pretaining to captial letters assume different distributions which we show below.
+```{r}
+cap.feats <- c("capital_run_length_average","capital_run_length_longest","capital_run_length_total")
+for (feat in cap.feats) {
+  print(feat)
+  print(summary(data[[feat]]))
+  print(paste("Var:", round(var(data[[feat]]),2)))
+}
+
+
+```
+As observed with the frequency data, the capital features exhibit very high variance as a consequence of their distributions long tail.
+
+Lastly observing the discrete distribution of spam_target will allow us to examine the balance of each class in our dataset.
+```{r}
+# Count occurrences of each value
+counts <- table(data$spam_target)
+
+# Calculate rates (proportions)
+rates <- counts / sum(counts)
+
+bar_midpoints <-barplot(rates, 
+        main = "Rate of Spam vs Not Spam", 
+        xlab = "Spam Target", 
+        ylab = "Rate", 
+        col = c("blue", "orange"), 
+        names.arg = c("Not Spam", "Spam"))
+text(x = bar_midpoints, y = 0.2, # Adjust position as needed
+     labels = paste(round(rates*100, 1), "%"), cex = 0.8, pos = 3)
+mean(data$spam_target)
+```
+This demonstrates that classes in this dataset are not equally balanced. However, since the rates are of comparable size, no corrective action need be taken like under/oversampling or class weights when we construct our model. 
+In our analysis this feature will be modeled as a Bernoulli random variable $Y$ with mean $E[Y] = 0.394$ and represents the probability that any email in our dataset is spam. 
+
+# Corralation of variables  
+Performing covariance analysis can provide information on which features variation is best correlated with variation in our target class and identify if there are possibly gorups of predictive features that are made redundant by being largely colinear with others. These features pose a potential issue to models because [finish]. 
+We conduct this analysis by calculating the correlation matrix with the r cor() method. Note that we do not need to scale the data before this step as the method returns a matrix of pearson correlation coefficients relating each feature, and adjusts for mean and variation in its calculation:  
+$$r_{ij} = \frac{(X_i-E[X_i])^T(X_j-E[X_j])}{||X_i-E[X_i]||_2||X_j-E[X_j]||_2}$$
+This information is made more useful with the heatmap() method. This provides a nice visulation of the information one can gained from this correlation matrix. By clustering closely related features, we may see which predictiors may be redundant, which best predict the target variable. 
+Here red,blue and white values represent features that are respectively positively, negatively, or poorly correlated. The method also provides a nice dendrogram, providing information about how closely related features are. Lastly we provide information about the type of each feature with the color bars next to the plot: blue: word frequency, orange: character frequency, green: palatial letter info., and red is our target spam status.
+```{r}
+cor_matrix <- cor(as.matrix(data))
+# Example with heatmap.2 (from gplots package)
+library(gplots)
+red_to_blue <- colorRampPalette(c("red", "white", "blue"))(100)
+colrs <- NULL
+for (i in 1:length(colnames(data))) {
+  col.name <- colnames(data)[i]
+  if (startsWith(col.name,"word_freq")){
+    colrs <- c(colrs, "lightblue")
+  } else if (startsWith(col.name,"char_freq")){
+    colrs <- c(colrs, "orange")
+  }else if (startsWith(col.name,"capital")){
+    colrs <- c(colrs, "lightgreen")
+  }else if (startsWith(col.name,"spam")){
+    colrs <- c(colrs, "red")
+  }
+}
+heatmap.out <- heatmap.2(cor_matrix, col=red_to_blue, scale="none", trace="none",ColSideColors = colrs, RowSideColors = colrs)
+
+```
+This plot is helpful in many ways for understanding many aspects of our data. 
+The blue region in the bottom left is indicative of a group of highly colinear features. 
+multi-colinearity represents a potential issue for logistic regression, as it 
+* introduces model instability, meaning the model could achieve the same performance using very different coefficients for variables that correlate strongly with others. This diminishes the intratibility and statistical significance of resulting parameters comprising a fitted model. 
+* can negatively impact the precision of the model, due to redundant information carrying a disporportinate influence on model predictions.  
+We address this issue with the introduction of regularization techniques, namely *LASSO* regression. but we can investigate further our set of multi-colinear features.
+```{r}
+colnames(data)[heatmap.out$colInd[1:12]]
+```
+These are all words negatively associated with spam in this dataset and are consequence of the way in which this data was collected. These words are specific to the technical setting that emails comprising this dataset were gathered. 
+This information is useful for classification in this context, but would not be useful if this is a model meant for deployment in a verity of contexts. It likely be helpful for other users of a model of this type to perform their on word and character frequency analysis of internal emails to see what is characteristic information could be useful. 
+This also raises an interesting possibility that a scammer with sufficient knowledge of their target company could adversarialy exploit this by trying to incorporate such words in to the body of their email. This would also entail a social aspect to engineering these scam emails, and in fact this is the pattern observed in phishing scams targeted at companies in the last decade where scammers will try to mimic the content of internal emails to fool targets and spam detection algorithms. 
+We later perform deviance analysis by excluding these terms and quantifying the effect in has on the models ability to successfully classify examples, giving insight into the the performance of this model in a more broad application.
+With feature correlation information we can examine the how values of features that best correlate to our target change by class: spam/not spam.
+```{r}
+cor_spam <- cor_matrix[,"spam_target"]
+cor_spam.indicies <- order(abs(cor_spam))
+cor_spam.sorted <- cor_spam[cor_spam.indicies]
+ncols.data <- length(cor_spam.sorted)
+cor_spam.sorted
+#barplot(c(mean(data[data$spam_target == 0, "word_freq_money"]),mean(data[data$spam_target == 1, "word_freq_money"])))
+plot_feature_means <- function(df, feature) {
+  mean_not_spam <- mean(df[df[["spam_target"]] == 0, feature], na.rm = TRUE)
+  mean_spam <- mean(df[df[["spam_target"]] == 1, feature], na.rm = TRUE)
+  
+  means <- c(mean_not_spam, mean_spam)
+  
+  barplot(means,
+          names.arg = c("Not Spam", "Spam"),
+          main = paste("frequency across classes of",feature),
+          ylab = "Mean Frequency %",
+          col = c("blue", "orange"),
+          ylim = c(0, max(means) * 1.1))
+
+  #text(c(1, 2), par("usr")[3] - 0.05, labels = c("Not Spam", "Spam"), srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+}
+
+plot_feature_means(data, "word_freq_money")
+plot_feature_means(data, "char_freq_$")
+plot_feature_means(data, "word_freq_hp")
+```
+```{r}
+# Assuming 'data' is your dataframe, and it contains a 'spam_target' column
+# 'plot.feats' contains the column indices of the features you want to plot
+
+plot.feats <- c(6)  # Example feature columns to plot
+
+# Prepare the plot window
+plot(NULL, xlim = c(-3, 10), ylim = c(0, 0.5), # Adjust xlim and ylim as needed
+     xlab = "Value", ylab = "Density",
+     main = "Density of Features by Class")
+
+# Colors for different classes
+colors <- c("blue", "red")
+
+# Loop through the selected features
+for (i in plot.feats) {
+  # Density estimate for class 0
+  density_estimate_0 <- density(data[data$spam_target == 0, i], na.rm = TRUE)
+  lines(density_estimate_0, col = colors[1], lwd = 2)  # lwd is line width
+  
+  # Density estimate for class 1
+  density_estimate_1 <- density(data[data$spam_target == 1, i], na.rm = TRUE)
+  lines(density_estimate_1, col = colors[2], lwd = 2)
+  
+  # Adding a legend only once
+  if (i == plot.feats[1]) {
+    legend("topright", legend = c("Not Spam", "Spam"), fill = colors, cex = 0.8)
+  }
+}
+
+# Note: Adjust 'xlim' and 'ylim' in plot(NULL, ...) to fit your data range
+
+```
+```{r}
+plot.feats <- c(5)# which feature(s) to plot
+par(mfrow=c(2, 1))
+colors <- c("blue", "red")
+for (i in plot.feats) {
+  hist(data[data$spam_target == 0, i], 
+       main = paste("Histogram of Feature", colnames(data)[i], "for Not Spam"), 
+       xlab = "Value", 
+       col = colors[1], 
+       xlim = c(-3, 10))
+  hist(data[data$spam_target == 1, i], 
+       main = paste("Histogram of Feature", colnames(data)[i], "for Spam"), 
+       xlab = "Value", 
+       col = colors[2], 
+       xlim = c(-3, 10))
+}
+par(mfrow=c(1, 1))
+
+```
+Here we calculate population statistics for each feature and normalize:
+this helps in fitting regularized logistic regression models like *lasso*, by preventing variable selection bias. We apply standard (z) scaling to our data.
+```{r}
+feat.means <- colMeans(data)
+feat.vars <- sapply(data, sd)
+#(data[,1:57] - feat.means[1:57]) * feat.vars
+data.scaled <- data
+data.scaled[,1:57] <- scale(data[,1:57]) # don't scale spam_target
+data.scaled
+```
+# Logistic Regression
+
+
+# GLM
+[SHOW performance on training]
+Here we provice a naive attempt at a GLM for logistic regression using all predictive features.
+```{r pressure, echo=FALSE}
+library(glmnet)
+X <- as.matrix(data.scaled[,-ncol(data.scaled)])
+y <- data.scaled$spam_target
+sample_size <- floor(0.7 * nrow(data))
+train_indices <- sample(seq_len(nrow(data)), size = sample_size)
+X.train <- X[train_indices, ]
+y.train <- y[train_indices]
+X.test <- X[-train_indices, ]
+y.test <- y[-train_indices]
+spam.glmnet <- cv.glmnet(X.train, y.train, family="binomial", type.measure="class")
+#glm.naive <- glm(y.train~., data=data.frame(y.train, X.train), family=binomial)
+#pred.naive <- predict(glm.naive, newdata = data.frame(X.test), type = "response")
+#pred.naive.classes <- ifelse(pred.naive > 0.5, 1, 0)
+#table(predicted = pred.naive.classes, actual = y.test)
+predictions <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
+predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
+confusion_matrix <- table(Predicted = predicted_classes, Actual = y.test)
+confusion_matrix
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+f1 <- 
+```
+
+```{r}
+library(glmnet)
+X <- as.matrix(data.scaled[,-ncol(data)])
+y <- data.scaled$spam_target
+sample_size <- floor(0.7 * nrow(data))
+train_indices <- sample(seq_len(nrow(data)), size = sample_size)
+X.train <- X[train_indices, ]
+y.train <- y[train_indices]
+X.test <- X[-train_indices, ]
+y.test <- y[-train_indices]
+spam.glmnet <- cv.glmnet(X.train, y.train,alpha=1, family="binomial", type.measure="class")
+predictions <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
+predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
+confusion_matrix <- table(Predicted = predicted_classes, Actual = y.test)
+confusion_matrix
+precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+
+
+```
+
