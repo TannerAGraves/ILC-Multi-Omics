@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Loading and Preprocessing
 
-```{r spam}
+```{r spam, warning=FALSE}
 data_path <- "spambase.data" # Update this to your file path
 data <- read.table(data_path, sep = ",", header = FALSE)
 col_names <- readLines("spambase_edit.names")
@@ -24,10 +24,10 @@ The dataset is well curated; there is no missing values. However, many integer f
 ## Examples
 examples in this data set
 ## Target feature
-Emails in the dataset are difinitively labeled spam with the binary feature 'spam_target'. 
+Emails in the dataset are definitively labeled spam with the binary feature 'spam_target'. 
 These 
 ## Predictive features  
-This dataset consits of 4601 examples of 58 variables which characterize the content of an email.   
+This dataset consists of 4601 examples of 58 variables which characterize the content of an email.   
 These properties are of heterogeneous type:
 * 55 are continuous real variables representing the frequency of observable attributes in the text.  
 * 48 of these are word frequencies, where a word is defined by a string of characters surrounded by white space. Some of the words of interest were selected as they correlate highly with spam like 'free' or 'credit' while others may be more characteristic of genuine e-mails sent in a workplace like: 'meeting' or 'project'.  
@@ -38,45 +38,43 @@ The remaining 2 predictive features are continuous integers representing:
 * The sum of all such continuous strings of capital letters present in the email body (excluding strings of length 1)  
 
 # Distribution of features  
-As a first act of reprocessing I will resale all frequency features to be represented as decimal rates rather than percent values.  
-```{r}
-#X[1:54] <- X[1:54] / 100
-```
-
-Here we plot representative distributions of our different features
+We refer to frequency features to mean columns whose values represent the frequency(as a percent) of a word or character appearing in the body of a given email. One would obviously expect that some words would appear with greater frequency than others. 
 Word frequencies have very small means and have mode 0, as most of the words are specific enough that a single email will have low chance to include the word at all. 
 However, since emails can naturally very drastically in their subject matter, so too does the frequencies with which specific words appear in them. 
-This is easily visualized by the long tail of the density plot. 
-Issues: Visualization, leverage, feature selection
+To get a better understanding of the distribution of these features in example emails we calculate population statistics for some representative features: 
+```{r warnigns=FALSE}
+library(psych)
+freq.feats <- c("word_freq_you","word_freq_money","word_freq_free", "char_freq_$","char_freq_[")
+describe(data[freq.feats])[c("mean","median","sd","min","max","range","skew","kurtosis")]
+```
+This demonstrates several things about frequency data:
+* most words have a very low average frequency, often not appearing at all in some emails  
+* long tail / high skew
+The standard deviation of frequencies is fairly low, meaning that much of the data is centrally clustered about the mean. However, we also observe *skew* and *kurtosis* values to be very high for many of these features. 
+Skewness captures the asymmetry of the distribution of examples about either side of the mean and high kurtosis conveys the tailedness of the distribution, or a propensity for examples to be outliers. 
+These properties are easily visualized by the long tail of the density plot. 
+[Issues: Visualization, leverage, feature selection]
 ```{r}
 density_estimate <- density(data[, 2], from=0)
 plot(density_estimate, main = "Density of Select freq. Features", xlab = "Frequency %", ylab = "Density")
-#num_columns <- ncol(X)
-
-
-# Loop through remaining columns and add their densities to the plot
 plot.feats <- c(3,5)
 for(i in plot.feats) {
   density_estimate <- density(data[, i], from=0)
   lines(density_estimate, col = i) # Use different colors for each column
 }
-
-# Add a legend to the plot to distinguish the columns
-#legend("topright", legend = paste("Column", 1:num_columns), fill = 1:num_columns)
 ```
-The long tail shown by frequency predictior features may be troubling. Logistic regression is robust to mild amounts of outliers.
+The long tail shown by frequency predictior features may be troubling. Logistic regression is robust to mild amounts of outliers, but the extreme examples may pose issues with overfitting or bias in variable selection with lasso. 
 In this situation, examples that lie at the extremes of feature distributions do not represent anomalies that can be discarded, but highly significant information about the content of the email. To better understand this significance, we examine the difference in distribution of features highly correlated with the outcome of spam_target by class later.
 
 The features pretaining to captial letters assume different distributions which we show below.
 ```{r}
 cap.feats <- c("capital_run_length_average","capital_run_length_longest","capital_run_length_total")
-for (feat in cap.feats) {
-  print(feat)
-  print(summary(data[[feat]]))
-  print(paste("Var:", round(var(data[[feat]]),2)))
-}
-
-
+describe(data[cap.feats])[c("mean","median","sd","min","max","range","skew","kurtosis")]
+# for (feat in cap.feats) {
+#   print(feat)
+#   print(summary(data[[feat]]))
+#   print(paste("Var:", round(var(data[[feat]]),2)))
+# }
 ```
 As observed with the frequency data, the capital features exhibit very high variance as a consequence of their distributions long tail.
 
@@ -140,35 +138,32 @@ colnames(data)[heatmap.out$colInd[1:12]]
 These are all words negatively associated with spam in this dataset and are consequence of the way in which this data was collected. These words are specific to the technical setting that emails comprising this dataset were gathered. 
 This information is useful for classification in this context, but would not be useful if this is a model meant for deployment in a verity of contexts. It likely be helpful for other users of a model of this type to perform their on word and character frequency analysis of internal emails to see what is characteristic information could be useful. 
 This also raises an interesting possibility that a scammer with sufficient knowledge of their target company could adversarialy exploit this by trying to incorporate such words in to the body of their email. This would also entail a social aspect to engineering these scam emails, and in fact this is the pattern observed in phishing scams targeted at companies in the last decade where scammers will try to mimic the content of internal emails to fool targets and spam detection algorithms. 
+[DEVIANCE ANALYSIS? remove if not doing]
 We later perform deviance analysis by excluding these terms and quantifying the effect in has on the models ability to successfully classify examples, giving insight into the the performance of this model in a more broad application.
 With feature correlation information we can examine the how values of features that best correlate to our target change by class: spam/not spam.
 ```{r}
-cor_spam <- cor_matrix[,"spam_target"]
-cor_spam.indicies <- order(abs(cor_spam))
-cor_spam.sorted <- cor_spam[cor_spam.indicies]
-ncols.data <- length(cor_spam.sorted)
-cor_spam.sorted
-#barplot(c(mean(data[data$spam_target == 0, "word_freq_money"]),mean(data[data$spam_target == 1, "word_freq_money"])))
-plot_feature_means <- function(df, feature) {
-  mean_not_spam <- mean(df[df[["spam_target"]] == 0, feature], na.rm = TRUE)
-  mean_spam <- mean(df[df[["spam_target"]] == 1, feature], na.rm = TRUE)
+plot_feature_means_grouped <- function(df, features) {
+  means_matrix <- matrix(nrow = 2, ncol = length(features))
+  colnames(means_matrix) <- features
+  rownames(means_matrix) <- c("Not Spam", "Spam")
   
-  means <- c(mean_not_spam, mean_spam)
+  for (i in seq_along(features)) {
+    feature <- features[i]
+    means_matrix[1, i] <- mean(df[df[["spam_target"]] == 0, feature], na.rm = TRUE)
+    means_matrix[2, i] <- mean(df[df[["spam_target"]] == 1, feature], na.rm = TRUE)
+  }
   
-  barplot(means,
-          names.arg = c("Not Spam", "Spam"),
-          main = paste("frequency across classes of",feature),
-          ylab = "Mean Frequency %",
-          col = c("blue", "orange"),
-          ylim = c(0, max(means) * 1.1))
-
-  #text(c(1, 2), par("usr")[3] - 0.05, labels = c("Not Spam", "Spam"), srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+  barplot(means_matrix, beside = TRUE, 
+          main = "Mean Frequency Across Classes",
+          ylab = "Mean Frequency %", col = c("blue", "orange"),
+          ylim = c(0, max(means_matrix) * 1.1), legend = rownames(means_matrix))
 }
 
-plot_feature_means(data, "word_freq_money")
-plot_feature_means(data, "char_freq_$")
-plot_feature_means(data, "word_freq_hp")
+# Example usage with multiple features
+plot_feature_means_grouped(data, c("word_freq_money", "char_freq_$", "word_freq_labs"))
+
 ```
+
 ```{r}
 # Assuming 'data' is your dataframe, and it contains a 'spam_target' column
 # 'plot.feats' contains the column indices of the features you want to plot
@@ -198,9 +193,6 @@ for (i in plot.feats) {
     legend("topright", legend = c("Not Spam", "Spam"), fill = colors, cex = 0.8)
   }
 }
-
-# Note: Adjust 'xlim' and 'ylim' in plot(NULL, ...) to fit your data range
-
 ```
 ```{r}
 plot.feats <- c(5)# which feature(s) to plot
@@ -221,24 +213,52 @@ for (i in plot.feats) {
 par(mfrow=c(1, 1))
 
 ```
-Here we calculate population statistics for each feature and normalize:
-this helps in fitting regularized logistic regression models like *lasso*, by preventing variable selection bias. We apply standard (z) scaling to our data.
+The last preprocessing steps we take is to scale our predictive features.
+This helps in fitting regularized logistic regression models like *lasso*, by preventing variable selection bias. 
+To address the issue of our highly skewed data, we transform the predictive features using $\log\text{1p}(x) = \log(1+x)$. This transformation was chosen for its ability to map examples taking a wide range of values to a more reasonable interval while a good degree of variation in examples close to 0. Additional, since the input of the the logarithm is strictly positive, there are no issues with the output being either negative or undefined. To test the effectiveness of this transformation, we preserved an untransformed dataset which we will use for comparison.
+We apply standard (z) scaling to both our transformed and and untransformed datasets. As an outcome of this all predictive features will have mean $0$ and variance $1$.
 ```{r}
-feat.means <- colMeans(data)
-feat.vars <- sapply(data, sd)
-#(data[,1:57] - feat.means[1:57]) * feat.vars
-data.scaled <- data
-data.scaled[,1:57] <- scale(data[,1:57]) # don't scale spam_target
-data.scaled
+data.trans <- data # mitigate tailedness by transforming data
+# log1p squashes positive reals (no issues with negative or undefined outputs)
+data.trans[,1:57] <- log1p(data[,1:57]) 
+data.trans.scaled <- data.trans
+data.trans.scaled[,1:57] <- scale(data.trans.scaled[,1:57]) # don't scale spam_target
+data.scaled <- data # untranslated data for comparison
+data.scaled[,1:57] <- scale(data.scaled[,1:57]) # don't scale spam_target
 ```
-# Logistic Regression
+We can see how these transformations have effected the population statistics of our representative features.
+```{r}
+freq.feats <- c("word_freq_you","word_freq_money","word_freq_free", "char_freq_$","char_freq_[")
+org.stats <- cbind(describe(data[freq.feats]), set=rep("org",5))[c("set","mean","median","sd","min","max","range","skew","kurtosis")]
+scaled.stats <- cbind(describe(data.scaled[freq.feats]),set=rep("scaled",5))[c("set","mean","median","sd","min","max","range","skew","kurtosis")]
+scaled.trans.stats <- cbind(describe(data.trans.scaled[freq.feats]),set=rep("scaled.trans",5))[c("set","mean","median","sd","min","max","range","skew","kurtosis")]
+all.stats <- rbind(org.stats,scaled.stats,scaled.trans.stats)
+#all.stats[,"set"] <- c(rep("original",5),rep("scaled",5), rep("trans.scaled",5))
+#all.stats[c(1)]
+print(all.stats[rep(c(1,6,11),5) + rep(0:4, each = 3),])
+```
+The above table displays skew and kurtosis values much lower for the transformed datasets. The effect of this will be tested in the next section.
 
+# Logistic Regression
+Logistic regression is an extension of linear regression that allows for estimating the probabilities associated with the outcome of a Bernoulli trial. In our case this would be $$\pi_i = P(Y=y_i;X=x_i)$$
+Where $y_i\in\{0,1\}$ is our label for an email (not spam/spam respectively), and $X$ is the set of predictor variables. In order to utilize linear regression to estimate these probabilities, they must be mapped to a linear representation. 
+$$\log(\frac{\pi_i}{1 - \pi_i}) = \beta_0 + \beta^Tx_i$$ 
+This is made more practical by converting the predicted probabilities into predicted outcomes of given examples, by taking $\hat{y}_i\in\{0,1\}$ to be the more probable.  
+Logistic regression solves the problem
+$$\min_{\beta_0, \beta} -\frac{1}{N}\sum_{i=1}^n [y_i\log(\pi_i) + (1 - y_i)\log(1-\pi_i)]$$
+where $$\hat{y}_i = \beta_0 + \beta^T x_i$$. 
+If we consider the inverse of our transfer map: 
+$$\pi_i = \frac{\exp(\beta_0+\beta^Tx_i)}{1+\exp(\beta_0+\beta^Tx_i)}$$ 
+We arrive at objective for logistic regression, as implemented by in R.
+$$\min_{\beta_0, \beta} -\frac{1}N\sum_{i=1}^n [y_i(\beta_0+\beta^Tx_i) - \log(1+\exp(\beta_0+\beta^Tx_i))]$$
+This optimization problem is solved with *Maximum Likelihood Estimation* (MLE). Where log likelihood of our label set, given our data (negative of our previously mentioned objective function) is maximized with respect to our parameters $\beta$ and $\beta_0$. This is done with various numerical optimization techniques.  
+From a more practical perspective, we can visualize what logistic regression is doing with an illustrative example: 
 
 # GLM
 [SHOW performance on training]
-Here we provice a naive attempt at a GLM for logistic regression using all predictive features.
-```{r pressure, echo=FALSE}
-library(glmnet)
+Here we provide a naive attempt at a GLM for logistic regression using all predictive features. 
+First we establish a train test split
+```{r}
 X <- as.matrix(data.scaled[,-ncol(data.scaled)])
 y <- data.scaled$spam_target
 sample_size <- floor(0.7 * nrow(data))
@@ -247,31 +267,67 @@ X.train <- X[train_indices, ]
 y.train <- y[train_indices]
 X.test <- X[-train_indices, ]
 y.test <- y[-train_indices]
+model <- glm(y~., data = data.frame(X.train, y=as.factor(y.train)), family = binomial)
+
+# Display the model summary
+summary(model)
+```
+From this output tells us many things about our fitted model. 
+fitted $\beta$ coefficients and respective, confidence values.
+deviance is a measure of a goodness of fit and can be seen to be proportional to our objective function
+$$D(\beta;y) = -2\sum_{i=1}^n[y_i\log(\hat{\pi}_i) + (1-y_i)\log(1-\hat{\pi}_i)]$$
+Null deviance is the deviance of a model that takes all values for $\beta$ to be zero and only takes $\beta_0 = E[Y] = 0.394$. This acts as a baseline we compare fitted models to assess the significance of their performance. 
+Residual deviance represents the difference in log-likelihood between a hypothetical perfect predictor and our fitted model: $D(\hat{\beta},y) = 2(\ell_s - l(\hat{\beta}))$.  
+From these results, we can see produces significant results, obtaining residual deviance well below null deviance. 
+The Akaike Information Criterion (AIC) is a specialized measure for the quality of a models fit given the number of predictive features utilized. It is defined as $AIC = 2k - 2\ln(\ell)$ This will become useful, as regularization methods utilized later will select only a subset of all predictor features.
+This information, however useful, has a potential problem in that logistic regression is prone to overfitting in particular situations. This occurs when the fitting process is able to utilize insignificant information (noise) to predict the target with inflated accuracy. In order to assess our model for evidence of this, we have partitioned our dataset into training and and a test partition for validation. We continue to assess how performance varies between these two partitions with an array of metrics.
+```{r}
+calculate_metrics <- function(predictions, ground_truths) {
+  predicted_classes <- ifelse(predictions > 0.5, 1, 0)
+  confusion_matrix <- table(Predicted = predicted_classes, Actual = ground_truths)
+  confusion_matrix
+  precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+  recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+  f1 <- 2 * (precision * recall) / (precision + recall)
+  accuracy <- (confusion_matrix[1,1] + confusion_matrix[2,2]) / sum(confusion_matrix)
+  return(list(
+    Precision = precision,
+    Recall = recall,
+    F1 = f1,
+    Accuracy = accuracy,
+    ConfusionMatrix = confusion_matrix
+  ))
+}
+```
+
+#LASSO
+
+```{r}
+set.seed(123)
+library(glmnet)
 spam.glmnet <- cv.glmnet(X.train, y.train, family="binomial", type.measure="class")
-#glm.naive <- glm(y.train~., data=data.frame(y.train, X.train), family=binomial)
-#pred.naive <- predict(glm.naive, newdata = data.frame(X.test), type = "response")
-#pred.naive.classes <- ifelse(pred.naive > 0.5, 1, 0)
-#table(predicted = pred.naive.classes, actual = y.test)
-predictions <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
-predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
-confusion_matrix <- table(Predicted = predicted_classes, Actual = y.test)
-confusion_matrix
-precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
-recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
-f1 <- 
+train.pred <- predict(spam.glmnet, newx = X.train, type = "response", s = spam.glmnet$lambda.min)
+test.pred <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
+train.metrics <- calculate_metrics(train.pred, y.train)
+test.metrics <- calculate_metrics(test.pred, y.test)
+rbind(train.metrics, test.metrics)[,1:4]
+print("Train")
+train.metrics$ConfusionMatrix
+print("Test")
+test.metrics$ConfusionMatrix
 ```
 
 ```{r}
 library(glmnet)
-X <- as.matrix(data.scaled[,-ncol(data)])
-y <- data.scaled$spam_target
-sample_size <- floor(0.7 * nrow(data))
-train_indices <- sample(seq_len(nrow(data)), size = sample_size)
-X.train <- X[train_indices, ]
-y.train <- y[train_indices]
-X.test <- X[-train_indices, ]
-y.test <- y[-train_indices]
-spam.glmnet <- cv.glmnet(X.train, y.train,alpha=1, family="binomial", type.measure="class")
+# X <- as.matrix(data.scaled[,-ncol(data)])
+# y <- data.scaled$spam_target
+# sample_size <- floor(0.7 * nrow(data))
+# train_indices <- sample(seq_len(nrow(data)), size = sample_size)
+# X.train <- X[train_indices, ]
+# y.train <- y[train_indices]
+# X.test <- X[-train_indices, ]
+# y.test <- y[-train_indices]
+spam.glmnet <- cv.glmnet(X.train, y.train, alpha=1, family="binomial", type.measure="class")
 predictions <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
 predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
 confusion_matrix <- table(Predicted = predicted_classes, Actual = y.test)
