@@ -194,25 +194,6 @@ for (i in plot.feats) {
   }
 }
 ```
-```{r}
-plot.feats <- c(5)# which feature(s) to plot
-par(mfrow=c(2, 1))
-colors <- c("blue", "red")
-for (i in plot.feats) {
-  hist(data[data$spam_target == 0, i], 
-       main = paste("Histogram of Feature", colnames(data)[i], "for Not Spam"), 
-       xlab = "Value", 
-       col = colors[1], 
-       xlim = c(-3, 10))
-  hist(data[data$spam_target == 1, i], 
-       main = paste("Histogram of Feature", colnames(data)[i], "for Spam"), 
-       xlab = "Value", 
-       col = colors[2], 
-       xlim = c(-3, 10))
-}
-par(mfrow=c(1, 1))
-
-```
 The last preprocessing steps we take is to scale our predictive features.
 This helps in fitting regularized logistic regression models like *lasso*, by preventing variable selection bias. 
 To address the issue of our highly skewed data, we transform the predictive features using $\log\text{1p}(x) = \log(1+x)$. This transformation was chosen for its ability to map examples taking a wide range of values to a more reasonable interval while a good degree of variation in examples close to 0. Additional, since the input of the the logarithm is strictly positive, there are no issues with the output being either negative or undefined. To test the effectiveness of this transformation, we preserved an untransformed dataset which we will use for comparison.
@@ -233,8 +214,6 @@ org.stats <- cbind(describe(data[freq.feats]), set=rep("org",5))[c("set","mean",
 scaled.stats <- cbind(describe(data.scaled[freq.feats]),set=rep("scaled",5))[c("set","mean","median","sd","min","max","range","skew","kurtosis")]
 scaled.trans.stats <- cbind(describe(data.trans.scaled[freq.feats]),set=rep("scaled.trans",5))[c("set","mean","median","sd","min","max","range","skew","kurtosis")]
 all.stats <- rbind(org.stats,scaled.stats,scaled.trans.stats)
-#all.stats[,"set"] <- c(rep("original",5),rep("scaled",5), rep("trans.scaled",5))
-#all.stats[c(1)]
 print(all.stats[rep(c(1,6,11),5) + rep(0:4, each = 3),])
 ```
 The above table displays skew and kurtosis values much lower for the transformed datasets. The effect of this will be tested in the next section.
@@ -260,6 +239,7 @@ Here we provide a naive attempt at a GLM for logistic regression using all predi
 First we establish a train test split
 ```{r}
 X <- as.matrix(data.scaled[,-ncol(data.scaled)])
+X.trans<- as.matrix(data.trans.scaled[,-ncol(data.scaled)])
 y <- data.scaled$spam_target
 sample_size <- floor(0.7 * nrow(data))
 train_indices <- sample(seq_len(nrow(data)), size = sample_size)
@@ -267,20 +247,28 @@ X.train <- X[train_indices, ]
 y.train <- y[train_indices]
 X.test <- X[-train_indices, ]
 y.test <- y[-train_indices]
-model <- glm(y~., data = data.frame(X.train, y=as.factor(y.train)), family = binomial)
-
-# Display the model summary
-summary(model)
+X.train.trans <- X.trans[train_indices, ]
+X.test.trans <- X.trans[-train_indices, ]
 ```
-From this output tells us many things about our fitted model. 
-fitted $\beta$ coefficients and respective, confidence values.
-deviance is a measure of a goodness of fit and can be seen to be proportional to our objective function
+We may compare a full model on both the transformed and untransformed datasets.  
+```{r warning=FALSE}
+model <- glm(y~., data = data.frame(X.train, y=as.factor(y.train)), family = binomial)
+summary(model)
+model.trans <- glm(y~., data = data.frame(X.train.trans, y=as.factor(y.train)), family = binomial)
+cat(paste("=============================================================\n",
+          "Model fit on transformed data:\nNull deviance:",model.trans$null.deviance,
+          "\nResidual deviance:", model.trans$deviance,
+          "\nAIC:", model.trans$aic
+          ))
+```
+From this output tells us many things about our fitted models. Notabaly, that the model fit on transformed data acheives a better fit than the unscaled data. This is demonstrated by the lower residual deviance and AIC values it acheives. Understnading this requires some interpration of the output, which consits of: fitted $\beta$ coefficients and respective, confidence values, as well as measures of goodness of fit: Deviance and AIC. 
+Deviance is a measure of a goodness of fit and can be seen to be proportional to our objective function
 $$D(\beta;y) = -2\sum_{i=1}^n[y_i\log(\hat{\pi}_i) + (1-y_i)\log(1-\hat{\pi}_i)]$$
 Null deviance is the deviance of a model that takes all values for $\beta$ to be zero and only takes $\beta_0 = E[Y] = 0.394$. This acts as a baseline we compare fitted models to assess the significance of their performance. 
 Residual deviance represents the difference in log-likelihood between a hypothetical perfect predictor and our fitted model: $D(\hat{\beta},y) = 2(\ell_s - l(\hat{\beta}))$.  
 From these results, we can see produces significant results, obtaining residual deviance well below null deviance. 
-The Akaike Information Criterion (AIC) is a specialized measure for the quality of a models fit given the number of predictive features utilized. It is defined as $AIC = 2k - 2\ln(\ell)$ This will become useful, as regularization methods utilized later will select only a subset of all predictor features.
-This information, however useful, has a potential problem in that logistic regression is prone to overfitting in particular situations. This occurs when the fitting process is able to utilize insignificant information (noise) to predict the target with inflated accuracy. In order to assess our model for evidence of this, we have partitioned our dataset into training and and a test partition for validation. We continue to assess how performance varies between these two partitions with an array of metrics.
+The Akaike Information Criterion (AIC) is a specialized measure for the quality of a models fit given the number of predictive features utilized. It is defined as $AIC = 2k - 2\ln(\ell)$ 
+This information, however useful, has a potential problem in that logistic regression is prone to overfitting in particular situations. This occurs when the fitting process is able to utilize insignificant information (noise) to predict the target with inflated accuracy. In order to assess our models for evidence of this, we have partitioned our datasets into training and test partitions for validation. We continue to assess how performance varies between these two partitions with an array of metrics.
 ```{r}
 calculate_metrics <- function(predictions, ground_truths) {
   predicted_classes <- ifelse(predictions > 0.5, 1, 0)
@@ -290,51 +278,84 @@ calculate_metrics <- function(predictions, ground_truths) {
   recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
   f1 <- 2 * (precision * recall) / (precision + recall)
   accuracy <- (confusion_matrix[1,1] + confusion_matrix[2,2]) / sum(confusion_matrix)
+  err_rate <- (confusion_matrix[1,2] + confusion_matrix[2,1]) / sum(confusion_matrix)
   return(list(
     Precision = precision,
     Recall = recall,
     F1 = f1,
     Accuracy = accuracy,
+    ErrorRate = err_rate,
     ConfusionMatrix = confusion_matrix
   ))
 }
 ```
 
-#LASSO
-
 ```{r}
-set.seed(123)
-library(glmnet)
-spam.glmnet <- cv.glmnet(X.train, y.train, family="binomial", type.measure="class")
-train.pred <- predict(spam.glmnet, newx = X.train, type = "response", s = spam.glmnet$lambda.min)
-test.pred <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
+train.pred <- predict(model, newx = X.train, type = "response")
+test.pred <- predict(model, data.frame(X.test), type = "response")
+train.trans.pred <- predict(model.trans, newx = X.train.trans, type = "response")
+test.trans.pred <- predict(model.trans, data.frame(X.test.trans), type = "response")
+
 train.metrics <- calculate_metrics(train.pred, y.train)
 test.metrics <- calculate_metrics(test.pred, y.test)
-rbind(train.metrics, test.metrics)[,1:4]
+train.trans.metrics <- calculate_metrics(train.trans.pred, y.train)
+test.trans.metrics <- calculate_metrics(test.trans.pred, y.test)
+
+rbind(train.metrics,train.trans.metrics, test.metrics,test.trans.metrics)[,1:5]
 print("Train")
 train.metrics$ConfusionMatrix
 print("Test")
 test.metrics$ConfusionMatrix
+print("Transformed Train")
+train.trans.metrics$ConfusionMatrix
+print("Transformed Test")
+test.trans.metrics$ConfusionMatrix
 ```
+The above metrics demonstrate:  
+1. There is a small amount of overfitting, as indicated by slightly better performance in the training classes than the test classes. 
+2. Transforming our predictive improved performance over both train and test sets, and leads to a model that demonstrates less overfitting than the model trained on un transformed features.  
+Given these results, we will consider only the transformed dataset moving forward.
+
+# LASSO
 
 ```{r}
 library(glmnet)
-# X <- as.matrix(data.scaled[,-ncol(data)])
-# y <- data.scaled$spam_target
-# sample_size <- floor(0.7 * nrow(data))
-# train_indices <- sample(seq_len(nrow(data)), size = sample_size)
-# X.train <- X[train_indices, ]
-# y.train <- y[train_indices]
-# X.test <- X[-train_indices, ]
-# y.test <- y[-train_indices]
-spam.glmnet <- cv.glmnet(X.train, y.train, alpha=1, family="binomial", type.measure="class")
-predictions <- predict(spam.glmnet, newx = X.test, type = "response", s = spam.glmnet$lambda.min)
-predicted_classes <- ifelse(predictions > 0.5, 1, 0) 
-confusion_matrix <- table(Predicted = predicted_classes, Actual = y.test)
-confusion_matrix
-precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
-recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+lasso.glmnet <- cv.glmnet(X.train.trans, y.train, alpha=1, family="binomial", type.measure="class")
+lasso.train.preds <- predict(lasso.glmnet, X.train.trans, type = "response", s = lasso.glmnet$lambda.min)
+lasso.test.preds <- predict(lasso.glmnet, X.test.trans, type = "response", s = lasso.glmnet$lambda.min)
 
+lasso.train.trans.metrics <- calculate_metrics(lasso.train.preds, y.train)
+lasso.test.trans.metrics <- calculate_metrics(lasso.test.preds, y.test)
 
+rbind(lasso.train.trans.metrics,lasso.test.trans.metrics)[,1:5]
+print("Train")
+lasso.train.trans.metrics$ConfusionMatrix
+print("Test")
+lasso.test.trans.metrics$ConfusionMatrix
+```
+The following plot shows both the number of non-zero $\beta$ coefficients, corresponding to the number of predictor features used for a given $\log(\lambda)$ as well as the misclassification error.
+```{r}
+par(mfrow = c(2,1), mar = c(4, 4, 2, 2))
+plot(log(lasso.glmnet$lambda), lasso.glmnet$nzero, xlab = "")
+plot(lasso.glmnet, cex.main = 0.9, cex.lab = 0.9, cex.axis = 0.9)
+par(mfrow = c(1,1))
+```
+Denoted on the plot are the points at which a choice of $\lambda$ minimizes the misclassification error and also the largest $\lambda$ choice within one standard error of the minimum. Taking this value may be useful if we are trying to minimize the number of predictor features in our model. 
+```{r}
+cbind(index=lasso.glmnet$index, lambda_val=lasso.glmnet$lambda[lasso.glmnet$index], num_non_zero=lasso.glmnet$nzero[lasso.glmnet$index])
+```
+The above table indicates that depending on our choice of the two $\lambda$, we could have a model that uses either $50$ or $34$ or our original $57$ predictor features. Furthermore, consulting the previous plot, choosing the smaller of the two models would not seem to have that bad of an impact on performance! We can calculate metrics for the smaller model to verify this is the case.
+```{r}
+lasso.train.preds.1se <- predict(lasso.glmnet, X.train.trans, type = "response", s = lasso.glmnet$lambda.1se)
+lasso.test.preds.1se <- predict(lasso.glmnet, X.test.trans, type = "response", s = lasso.glmnet$lambda.1se)
+
+lasso.train.trans.metrics.1se <- calculate_metrics(lasso.train.preds.1se, y.train)
+lasso.test.trans.metrics.1se <- calculate_metrics(lasso.test.preds.1se, y.test)
+
+rbind(lasso.train.trans.metrics,lasso.train.trans.metrics.1se,lasso.test.trans.metrics,lasso.test.trans.metrics.1se)[,1:4]
+#print("Train")
+lasso.train.trans.metrics.1se$ConfusionMatrix
+#print("Test")
+lasso.test.trans.metrics.1se$ConfusionMatrix
 ```
 
