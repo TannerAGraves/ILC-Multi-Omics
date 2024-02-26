@@ -421,12 +421,41 @@ This test indicate that the lower deviance achieved by the full model is statist
 ## Naive Bayes
 In this paper we have primarily focused on regularized logistic regression. This has been useful as it provided a means of methodically selecting varibles will fitting a simplifed model. In this section we compare our results to another methods generally reguarded as performing well at natural language processing tasks like the one we face, Naive Bayes. 
 [formal]
-```{r}
+Here we implement 4 Naive Bayes classifiers to serve as a baseline for our lasso model. In fitting we assume Poisson distribution features rather than Gaussian. As we demonstrated in our EDA, distribution of frequencies deviate quite a bit from Poisson. However, in this case interpreting frequency data as Poisson makes more sense than the alternative: Gaussian.
+```{r warning=FALSE, echo=FALSE}
+calculate_metrics_nb <- function(predictions, ground_truths) {
+  confusion_matrix <- table(Predicted = predictions, Actual = ground_truths)
+  confusion_matrix
+  precision <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+  recall <- confusion_matrix[2, 2] / sum(confusion_matrix[, 2])
+  f1 <- 2 * (precision * recall) / (precision + recall)
+  accuracy <- (confusion_matrix[1,1] + confusion_matrix[2,2]) / sum(confusion_matrix)
+  err_rate <- (confusion_matrix[1,2] + confusion_matrix[2,1]) / sum(confusion_matrix)
+  return(list(
+    Precision = precision,
+    Recall = recall,
+    F1 = f1,
+    Accuracy = accuracy,
+    ErrorRate = err_rate,
+    ConfusionMatrix = confusion_matrix
+  ))
+}
+```
+```{r warning=FALSE}
 library(naivebayes)
 set.seed(123)
-nb <- naive_bayes(y~., data.frame(X.train.trans, y=as.factor(y.train)), usepoisson = TRUE)
+nb <- naive_bayes(y~., data.frame(X.train, y=as.factor(y.train)), usepoisson = TRUE)
+nb.trans <- naive_bayes(y~., data.frame(X.train.trans, y=as.factor(y.train)), usepoisson = TRUE)
+nb.reduced <- naive_bayes(y~., data.frame(X.train[,feat.nzeros], y=as.factor(y.train)), usepoisson = TRUE)
+nb.trans.reduced <- naive_bayes(y~., data.frame(X.train.trans[,feat.nzeros], y=as.factor(y.train)), usepoisson = TRUE)
 summary(nb)
-predict(nb, X.test.trans)
+rbind(
+calculate_metrics_nb(predict(nb, X.test, type="class"),y.test),
+calculate_metrics_nb(predict(nb.trans, X.test.trans, type="class"),y.test),
+calculate_metrics_nb(predict(nb, X.test[,feat.nzeros], type="class"),y.test),
+calculate_metrics_nb(predict(nb.trans, X.test.trans[,feat.nzeros], type="class"),y.test)
+)
 ```
+
 
 
