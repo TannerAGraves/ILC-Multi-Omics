@@ -234,10 +234,10 @@ This optimization problem is solved with *Maximum Likelihood Estimation* (MLE). 
 From a more practical perspective, we can visualize what logistic regression is doing with an illustrative example: 
 
 # GLM
-[SHOW performance on training]
 Here we provide a naive attempt at a GLM for logistic regression using all predictive features. 
 First we establish a train test split
 ```{r}
+set.seed(123)
 X <- as.matrix(data.scaled[,-ncol(data.scaled)])
 X.trans<- as.matrix(data.trans.scaled[,-ncol(data.scaled)])
 y <- data.scaled$spam_target
@@ -252,6 +252,7 @@ X.test.trans <- X.trans[-train_indices, ]
 ```
 We may compare a full model on both the transformed and untransformed datasets.  
 ```{r warning=FALSE}
+set.seed(123)
 model <- glm(y~., data = data.frame(X.train, y=as.factor(y.train)), family = binomial)
 summary(model)
 model.trans <- glm(y~., data = data.frame(X.train.trans, y=as.factor(y.train)), family = binomial)
@@ -320,6 +321,7 @@ Given these results, we will consider only the transformed dataset moving forwar
 
 ```{r}
 library(glmnet)
+set.seed(123)
 lasso.glmnet <- cv.glmnet(X.train.trans, y.train, alpha=1, family="binomial", type.measure="class")
 lasso.train.preds <- predict(lasso.glmnet, X.train.trans, type = "response", s = lasso.glmnet$lambda.min)
 lasso.test.preds <- predict(lasso.glmnet, X.test.trans, type = "response", s = lasso.glmnet$lambda.min)
@@ -358,4 +360,73 @@ lasso.train.trans.metrics.1se$ConfusionMatrix
 #print("Test")
 lasso.test.trans.metrics.1se$ConfusionMatrix
 ```
+Here we examine which features were selected (or removed) from the model
+```{r}
+betas.1se <-lasso.glmnet$glmnet.fit$beta[,lasso.glmnet$index[2]]
+feat.zeros <- names(betas.1se[betas.1se == 0])
+feat.nzeros <- names(betas.1se[betas.1se != 0])
+feat.zeros
+feat.nzeros
+```
+Many of the predictors dropped from this smaller model where features we identified earlier as being notably colinear with other features. As part of our preprocessing, we decided not to discard any of these features, as we intended to select variables through the process of lasso regression. We can check the models work by inspecting if the features it has selected exibit less colinearity than the full model.  
+In order to to do this we need to refit a glm with only the selected features. This is because we used cv.glment earlier for its ability to perform a gridsearch to select the best $\lambda$. When doing this we also passed type = "response", which reports misclassification error instead of deviance.
+```{r warning=FALSE}
+set.seed(123)
+model.trans.reduced <- glm(y~., data = data.frame(X.train.trans[,feat.nzeros], y=as.factor(y.train)), family = binomial)
+cat("=============================================================",
+          "\nModel fit on transformed data:",
+          "\nNull deviance:",model.trans$null.deviance,
+          "\nResidual deviance:", model.trans$deviance,
+          "\nAIC:", model.trans$aic,"\n"
+)
+cat("=============================================================",
+          "\nReduced Model fit on transformed data:",
+          "\nNull deviance:",model.trans.reduced$null.deviance,
+          "\nResidual deviance:", model.trans.reduced$deviance,
+          "\nAIC:", model.trans.reduced$aic
+)
+```
+In order to assess multicolinearity in the two different sets of predictors, we compute the Variance Inflation Factor (VIF) for both. VIF is calculated for each feature by fitting a linear model with all other features as predictors and taking the $R^2$ statistic from each model:  
+$$VIF_j = \frac{1}{1-R^2_{X_j|X_{-j}}}$$. Below we plot the log(VIF) values for features from each model to illustrate the difference in colinearity found in the full and reduced models:  
+```{r}
+library(car)
+vif.full <- vif(model.trans)
+vif.reduced <- vif(model.trans.reduced)
+vif.df <- merge(
+  data.frame(variable = names(vif.full), vif_model_trans = vif.full, stringsAsFactors = FALSE),
+  data.frame(variable = names(vif.reduced), vif_model_trans_reduced = vif.reduced, stringsAsFactors = FALSE),
+  by = "variable", all=TRUE
+)
+vif.df <- vif.df[order(vif.df$vif_model_trans, decreasing=TRUE),]
+plot(vif.df$vif_model_trans, type="p",col="blue", 
+     main="VIF values for features in Full and Reduced models",
+     xlab="Feature (sorted by VIF)", ylab="VIF")
+points(vif.df$vif_model_trans_reduced, type = 'p',  col = "red")
+legend("topright", legend = c("Full", "Reduced"), col = c("blue", "red"),pch=c(19,19))
+```
+This plot demonstrates that for features retained in the reduced model, their VIF value will generally be smaller when fit against other retained predictors. As a result, the reduced model as chosen by lasso regresison demonstrates less colinearity among its predictors. We additionally see that for both models, though colinearity is presant, VIF values for the reduced model lie in the range of (0,5) which is generally thought to be acceptable bounds for colinearity in a dataset.
+
+## Deviance test
+As to be expected, the reduced model has increased residual variance. In general, the residual deviance of a nested model should be unable to exceed that of the full. This isn't to condemn the performance of the reduced model, though. We can see it achieves comparable AIC, and we saw that the reduced model from the glmnet method has comparable validation performance. We can more rigorously quantify this difference by performing a deviance test.  
+This tests assumes the difference in residuals have a $\chi^2$ distribution and tests the following hypothesis:  
+$\text{H}_0$: The reduced model provides an adequate fit.  
+$\text{H}_1$: The larger models fit is significantly better.  
+This can be performed with the anova method in r and reports a p-value indication support for $\text{H}_0$.
+```{r}
+dev.test <- anova(model.trans.reduced,model.trans,test="Chisq")
+dev.test
+```
+This test indicate that the lower deviance achieved by the full model is statistically significant (p-value less than 0.05). However, we were quite aggressive with our removal of features to produce a more simple model. Furthermore, we deem the slight sacrifice in validation performance, though noticeable, to be justified.
+
+## Naive Bayes
+In this paper we have primarily focused on regularized logistic regression. This has been useful as it provided a means of methodically selecting varibles will fitting a simplifed model. In this section we compare our results to another methods generally reguarded as performing well at natural language processing tasks like the one we face, Naive Bayes. 
+[formal]
+```{r}
+library(naivebayes)
+set.seed(123)
+nb <- naive_bayes(y~., data.frame(X.train.trans, y=as.factor(y.train)), usepoisson = TRUE)
+summary(nb)
+predict(nb, X.test.trans)
+```
+
 
