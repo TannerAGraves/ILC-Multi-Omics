@@ -181,11 +181,11 @@ colors <- c("blue", "red")
 # Loop through the selected features
 for (i in plot.feats) {
   # Density estimate for class 0
-  density_estimate_0 <- density(data[data$spam_target == 0, i], na.rm = TRUE)
+  density_estimate_0 <- density(data[data$spam_target == 0, i], na.rm = TRUE,from=0)
   lines(density_estimate_0, col = colors[1], lwd = 2)  # lwd is line width
   
   # Density estimate for class 1
-  density_estimate_1 <- density(data[data$spam_target == 1, i], na.rm = TRUE)
+  density_estimate_1 <- density(data[data$spam_target == 1, i], na.rm = TRUE, from=0)
   lines(density_estimate_1, col = colors[2], lwd = 2)
   
   # Adding a legend only once
@@ -198,7 +198,7 @@ The last preprocessing steps we take is to scale our predictive features.
 This helps in fitting regularized logistic regression models like *lasso*, by preventing variable selection bias. 
 To address the issue of our highly skewed data, we transform the predictive features using $\log\text{1p}(x) = \log(1+x)$. This transformation was chosen for its ability to map examples taking a wide range of values to a more reasonable interval while a good degree of variation in examples close to 0. Additional, since the input of the the logarithm is strictly positive, there are no issues with the output being either negative or undefined. To test the effectiveness of this transformation, we preserved an untransformed dataset which we will use for comparison.
 We apply standard (z) scaling to both our transformed and and untransformed datasets. As an outcome of this all predictive features will have mean $0$ and variance $1$.
-```{r}
+```{r warning=FALSE}
 data.trans <- data # mitigate tailedness by transforming data
 # log1p squashes positive reals (no issues with negative or undefined outputs)
 data.trans[,1:57] <- log1p(data[,1:57]) 
@@ -262,7 +262,7 @@ cat(paste("=============================================================\n",
           "\nAIC:", model.trans$aic
           ))
 ```
-From this output tells us many things about our fitted models. Notabaly, that the model fit on transformed data acheives a better fit than the unscaled data. This is demonstrated by the lower residual deviance and AIC values it acheives. Understnading this requires some interpration of the output, which consits of: fitted $\beta$ coefficients and respective, confidence values, as well as measures of goodness of fit: Deviance and AIC. 
+From this output tells us many things about our fitted models. Notabaly, that the model fit on transformed data acheives a better fit than the unscaled data. This is demonstrated by the lower residual deviance and AIC values it acheives. Understnading this requires some interpration of the output, which consits of: fitted $\beta$ coefficients and respective, confidence values, as well as measures of goodness of fit: Deviance and AIC.  
 Deviance is a measure of a goodness of fit and can be seen to be proportional to our objective function
 $$D(\beta;y) = -2\sum_{i=1}^n[y_i\log(\hat{\pi}_i) + (1-y_i)\log(1-\hat{\pi}_i)]$$
 Null deviance is the deviance of a model that takes all values for $\beta$ to be zero and only takes $\beta_0 = E[Y] = 0.394$. This acts as a baseline we compare fitted models to assess the significance of their performance. 
@@ -444,17 +444,16 @@ calculate_metrics_nb <- function(predictions, ground_truths) {
 ```{r warning=FALSE}
 library(naivebayes)
 set.seed(123)
-nb <- naive_bayes(y~., data.frame(X.train, y=as.factor(y.train)), usepoisson = TRUE)
-nb.trans <- naive_bayes(y~., data.frame(X.train.trans, y=as.factor(y.train)), usepoisson = TRUE)
-nb.reduced <- naive_bayes(y~., data.frame(X.train[,feat.nzeros], y=as.factor(y.train)), usepoisson = TRUE)
-nb.trans.reduced <- naive_bayes(y~., data.frame(X.train.trans[,feat.nzeros], y=as.factor(y.train)), usepoisson = TRUE)
+nb <- bernoulli_naive_bayes(X.train, as.factor(y.train), usepoisson = TRUE)
+nb.trans <- bernoulli_naive_bayes(X.train.trans, as.factor(y.train), usepoisson = TRUE)
+nb.reduced <- bernoulli_naive_bayes(X.train[,feat.nzeros], as.factor(y.train), usepoisson = TRUE)
+nb.trans.reduced <- bernoulli_naive_bayes(X.train.trans[,feat.nzeros], as.factor(y.train), usepoisson = TRUE)
 summary(nb)
-rbind(
-calculate_metrics_nb(predict(nb, X.test, type="class"),y.test),
-calculate_metrics_nb(predict(nb.trans, X.test.trans, type="class"),y.test),
-calculate_metrics_nb(predict(nb, X.test[,feat.nzeros], type="class"),y.test),
-calculate_metrics_nb(predict(nb.trans, X.test.trans[,feat.nzeros], type="class"),y.test)
-)
+nb.full.metrics <- calculate_metrics_nb(predict(nb, X.test, type="class"),y.test)
+nb.full.trans.metrics <- calculate_metrics_nb(predict(nb.trans, X.test.trans, type="class"),y.test)
+nb.reduced.metrics <- calculate_metrics_nb(predict(nb, X.test[,feat.nzeros], type="class"),y.test)
+nb.reduced.trans.metrics <- calculate_metrics_nb(predict(nb.trans, X.test.trans[,feat.nzeros], type="class"),y.test)
+rbind(nb.full.metrics,nb.full.trans.metrics,nb.reduced.metrics,nb.reduced.trans.metrics)[,c(1,2,3,4,5)]
 ```
 
 
